@@ -30,29 +30,30 @@ A powerful, automated tool designed to streamline bank branch audits by processi
 - **Lucide React** for modern iconography
 - **Date-fns** for precise tenure and aging calculations
 
-## 📦 Installation
+## 🚀 How to Use (No Installation Needed)
 
-1. **Prerequisites**: Ensure you have [Node.js](https://nodejs.org/) installed.
-2. **Clone the repository**:
+This tool is designed to be **portable and private**. You do not need to install anything on your computer to use it.
+
+1. **Download the Tool**: Go to the **Actions** tab in this repository, click on the latest build, and download the `Bank_Audit_Tool_Offline` file.
+2. **Open the File**: Locate the downloaded `index.html` file (you can rename it to `Bank_Audit_Tool.html`).
+3. **Run**: Double-click the file. It will open in your web browser (Chrome, Edge, or Firefox).
+4. **Offline Use**: You can save this file to a USB drive or email it to colleagues. It works perfectly even without an internet connection.
+
+## 🔒 Privacy & Confidentiality
+
+- **100% Client-Side**: All data processing happens locally in your browser.
+- **No Data Uploads**: Your confidential bank data never leaves your computer.
+- **No Internet Required**: Once you have the file, you can disconnect from the internet and the tool will still work.
+
+## 🛠️ Development (For Technical Users Only)
+
+If you want to modify the source code:
+1. **Clone the repository**:
    ```bash
    git clone https://github.com/your-username/bank-audit-intelligence-suite.git
-   cd bank-audit-intelligence-suite
    ```
-3. **Install dependencies**:
-   ```bash
-   npm install
-   ```
-
-## 🚀 Usage
-
-1. **Start the development server**:
-   ```bash
-   npm run dev
-   ```
-2. **Open the application**: Navigate to the URL provided in the terminal (usually `http://localhost:5173`).
-3. **Upload Data**: Select your bank's raw data file (Excel or CSV).
-4. **Map Fields**: Map your source columns to the standard audit fields.
-5. **Generate Report**: Click "Download Excel Report" to receive the fully formatted audit suite.
+2. **Install dependencies**: `npm install`
+3. **Build the portable file**: `npm run build`
 
 ## 📄 License
 
