@@ -1,7 +1,15 @@
 # Bank Audit Intelligence Suite
 
-**[📦 Download Portable Offline Tool](https://github.com/YOU/bank-audit-intelligence-suite/actions)**
-*(Go to Actions > Select latest run > Download from 'Artifacts')*
+**[🚀 Launch Tool Directly](Bank_Audit_Tool.html)** (Download or open this file to use)
+
+---
+
+## 📂 Repository Structure
+- **Bank_Audit_Tool.html**: The standalone app. Just download and open it!
+- **source-code/**: Everything needed to modify or rebuild the tool.
+- **Bank Audit Intelligence Suite.bat**: Shortcut to run the tool locally.
+
+---
 
 A powerful, automated tool designed to streamline bank branch audits by processing account data and generating comprehensive risk-based audit reports. This suite helps auditors identify high-risk accounts, verify asset classification, and summarize findings with professional Excel exports.
 

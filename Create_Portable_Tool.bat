@@ -6,7 +6,7 @@ echo   Creating your Portable Offline Tool...
 echo ============================================================
 echo.
 
-cd /d "%~dp0"
+cd /d "%~dp0source-code"
 
 echo [1/2] Installing build tools (this may take a minute first time)...
 call npm install

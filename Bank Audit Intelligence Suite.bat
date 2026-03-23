@@ -6,7 +6,7 @@ echo   Starting Bank Audit Intelligence Suite...
 echo ============================================================
 echo.
 
-cd /d "c:\Users\cajai\.gemini\antigravity\scratch\data-summarizer"
+cd /d "%~dp0source-code"
 
 :: Open the browser after a short delay to allow server startup
 echo Opening browser at http://localhost:5180...
