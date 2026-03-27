@@ -256,18 +256,54 @@ const calculateRiskMetrics = (row, auditToObj) => {
     const isNpa = assetClass === 'NPA';
     const utilisationPct = sanction > 0 ? netOs / sanction : 0;
 
-    // ── NPA Accounts: skip risk scoring — already classified ────────────────
-    // Risk matrix is designed to surface problems in STANDARD accounts.
-    // NPA accounts are tracked separately; we only provide a context remark.
+    // ── NPA Accounts: Risk scoring matrix (NPA Age + Security + Overdue) ────────────────
     if (isNpa) {
-        const npaAge = npaDate ? Math.floor((today - npaDate) / (1000 * 60 * 60 * 24)) : null;
-        const secTotal = primarySec + collateralSec;
-        const secCovPct = sanction > 0 ? ((secTotal / sanction) * 100).toFixed(0) : '0';
-        const remarkParts = [`NPA account${npaAge !== null ? ` (${npaAge} days since NPA date)` : ''}`];
+        const npaAgeDays = npaDate ? Math.floor((today - npaDate) / (1000 * 60 * 60 * 24)) : 0;
+        const totalSecurity = primarySec + collateralSec;
+        const secRatio = netOs > 0 ? totalSecurity / netOs : 1.0;
+        const overdueRatio = netOs > 0 ? overdueAmt / netOs : 0;
+
+        // 1. Asset Aging (Weight: 50)
+        let ageScore = 10; // Sub-standard (< 1 yr)
+        if      (npaAgeDays >= 1095) ageScore = 50; // Doubtful D3 / Loss (> 3 yrs)
+        else if (npaAgeDays >= 730)  ageScore = 40; // Doubtful D2 (2-3 yrs)
+        else if (npaAgeDays >= 365)  ageScore = 25; // Doubtful D1 (1-2 yrs)
+
+        // 2. Security Coverage (Weight: 40)
+        let securityScore = 0;
+        if      (secRatio < 0.25) securityScore = 40; // Practically Unsecured
+        else if (secRatio < 0.50) securityScore = 30; // Highly Under-secured
+        else if (secRatio < 0.75) securityScore = 20; // Partially Secured
+        else if (secRatio < 1.00) securityScore = 10; // Marginal Security gap
+
+        // 3. Overdue Intensity (Weight: 10)
+        let overdueScore = 0;
+        if      (overdueRatio > 0.50) overdueScore = 10;
+        else if (overdueRatio > 0.10) overdueScore = 5;
+
+        const score = ageScore + securityScore + overdueScore;
+
+        let riskLabel;
+        if      (score >= 81) riskLabel = 'NPA - Critical';
+        else if (score >= 61) riskLabel = 'NPA - High Risk';
+        else if (score >= 31) riskLabel = 'NPA - Medium Risk';
+        else                  riskLabel = 'NPA - Low Risk';
+
+        const npaAgeDesc = npaAgeDays > 365 ? `${(npaAgeDays / 365).toFixed(1)} years` : `${npaAgeDays} days`;
+        const remarkParts = [`NPA account (${npaAgeDesc} since NPA date)`];
         if (overdueAmt > 0) remarkParts.push(`overdue Rs.${Math.round(overdueAmt).toLocaleString('en-IN')}`);
-        if (secTotal < sanction) remarkParts.push(`security coverage ${secCovPct}% of limit`);
-        const remark = remarkParts.join('; ') + '.';
-        return { riskScore: null, riskLabel: 'NPA', auditRemark: remark };
+        if (totalSecurity < netOs) {
+            const secCovPct = netOs > 0 ? ((totalSecurity / netOs) * 100).toFixed(0) : '0';
+            remarkParts.push(`security coverage ${secCovPct}% of outstanding`);
+        } else {
+            remarkParts.push('fully secured');
+        }
+        
+        const remark = remarkParts.length > 0
+            ? remarkParts.map((r, i) => i === 0 ? r.charAt(0).toUpperCase() + r.slice(1) : r).join('; ') + '.'
+            : 'NPA account details.';
+
+        return { riskScore: score, riskLabel, auditRemark: remark };
     }
 
 
@@ -571,34 +607,13 @@ export const exportToExcel = async (processedData, targetFields, auditPeriod, np
                 cell.alignment = { vertical: 'middle', horizontal: 'right' };
             } else if (fieldName === 'Risk Score') {
                 cell.alignment = { vertical: 'middle', horizontal: 'center' };
-                // Pastel fill per risk label (NPA gets soft lavender; null score shows dash)
-                const RISK_STYLE = {
-                    'Low':      { bg: 'FFE8F5E9', fg: 'FF2E7D32' }, // Pastel green
-                    'Medium':   { bg: 'FFFEF3C7', fg: 'FF92400E' }, // Pastel amber
-                    'High':     { bg: 'FFFDE8D0', fg: 'FF9A3412' }, // Pastel orange
-                    'Critical': { bg: 'FFFCE8E8', fg: 'FF9B1C1C' }, // Pastel red
-                    'NPA':      { bg: 'FFEDE9FE', fg: 'FF5B21B6' }, // Pastel violet — separate category
-                };
-                const rs = RISK_STYLE[rowRiskLabel] || RISK_STYLE['Low'];
+                const rs = { bg: 'FFFFFFFF', fg: 'FF000000' };
                 cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rs.bg } };
                 cell.font = { bold: true, size: 10, color: { argb: rs.fg } };
-                // Display 'N/A' for NPA accounts (riskScore is null)
-                if (rowRiskLabel === 'NPA') {
-                    cell.value = 'N/A';
-                    cell.numFmt = '@';
-                } else {
-                    cell.numFmt = '0';
-                }
+                cell.numFmt = '0';
             } else if (fieldName === 'Risk Label') {
                 cell.alignment = { vertical: 'middle', horizontal: 'center' };
-                const RISK_STYLE = {
-                    'Low':      { bg: 'FFE8F5E9', fg: 'FF2E7D32' },
-                    'Medium':   { bg: 'FFFEF3C7', fg: 'FF92400E' },
-                    'High':     { bg: 'FFFDE8D0', fg: 'FF9A3412' },
-                    'Critical': { bg: 'FFFCE8E8', fg: 'FF9B1C1C' },
-                    'NPA':      { bg: 'FFEDE9FE', fg: 'FF5B21B6' },
-                };
-                const rs = RISK_STYLE[rowRiskLabel] || RISK_STYLE['Low'];
+                const rs = { bg: 'FFFFFFFF', fg: 'FF000000' };
                 cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rs.bg } };
                 cell.font = { bold: true, color: { argb: rs.fg } };
             } else if (fieldName === 'Audit Remark') {
@@ -608,9 +623,10 @@ export const exportToExcel = async (processedData, targetFields, auditPeriod, np
         });
     });
 
-    const nonNpaTargetFields = targetFields.filter(f => f !== 'NPA Provision');
-
     // ─────────────────────────────────────────────────────────────────────────────
+    // ADDITIONAL AUDIT SHEETS
+    // ─────────────────────────────────────────────────────────────────────────────
+
     // --- Generate Audit Findings Summary Sheet ---
     // ─────────────────────────────────────────────────────────────────────────────
     {
@@ -618,27 +634,32 @@ export const exportToExcel = async (processedData, targetFields, auditPeriod, np
 
         // ── Color palette (consistent with indigo theme) ──
         const COLOR = {
-            INDIGO_700:  'FF4338CA',
-            INDIGO_100:  'FFE0E7FF',
+            INDIGO_700:  'FF000000',
+            INDIGO_100:  'FFFFFFFF',
             WHITE:       'FFFFFFFF',
-            GRAY_50:     'FFF9FAFB',
-            GRAY_200:    'FFE5E7EB',
-            GREEN_BG:    'FFE8F5E9',
-            GREEN_FG:    'FF2E7D32',
-            AMBER_BG:    'FFFFF8E1',
-            AMBER_FG:    'FFF57F17',
-            ORANGE_BG:   'FFFFE0B2',
-            ORANGE_FG:   'FFE65100',
-            RED_BG:      'FFFFEBEE',
-            RED_FG:      'FFB71C1C',
-            DARK:        'FF1E1B4B',
+            GRAY_50:     'FFFFFFFF',
+            GRAY_200:    'FFCCCCCC',
+            RED_BG:      'FFFFFFFF',
+            RED_FG:      'FF000000',
+            ORANGE_BG:   'FFFFFFFF',
+            ORANGE_FG:   'FF000000',
+            AMBER_BG:    'FFFFFFFF',
+            AMBER_FG:    'FF000000',
+            GREEN_BG:    'FFFFFFFF',
+            GREEN_FG:    'FF000000',
+            DARK:        'FF000000'
         };
 
         const riskColors = {
-            Low:      { bg: COLOR.GREEN_BG,  fg: COLOR.GREEN_FG },
-            Medium:   { bg: COLOR.AMBER_BG,  fg: COLOR.AMBER_FG },
-            High:     { bg: COLOR.ORANGE_BG, fg: COLOR.ORANGE_FG },
-            Critical: { bg: COLOR.RED_BG,    fg: COLOR.RED_FG },
+            'Low':      { bg: 'FFFFFFFF',  fg: 'FF000000' },
+            'Medium':   { bg: 'FFFFFFFF',  fg: 'FF000000' },
+            'High':     { bg: 'FFFFFFFF', fg: 'FF000000' },
+            'Critical': { bg: 'FFFFFFFF',    fg: 'FF000000' },
+            'NPA - Low Risk':    { bg: 'FFFFFFFF', fg: 'FF000000' },
+            'NPA - Medium Risk': { bg: 'FFFFFFFF', fg: 'FF000000' },
+            'NPA - High Risk':   { bg: 'FFFFFFFF', fg: 'FF000000' },
+            'NPA - Critical':    { bg: 'FFFFFFFF', fg: 'FF000000' },
+            'NPA':               { bg: 'FFFFFFFF', fg: 'FF000000' },
         };
 
         // Helpers
@@ -768,9 +789,10 @@ export const exportToExcel = async (processedData, targetFields, auditPeriod, np
         tableHeaderRow(currentRow, ['Risk Category', 'No. of Accounts', 'Outstanding (Rs.)', '% of Portfolio', 'Average Score']);
         currentRow++;
 
-        ['Low', 'Medium', 'High', 'Critical'].forEach(label => {
+        ['Low', 'Medium', 'High', 'Critical', 'NPA - Low Risk', 'NPA - Medium Risk', 'NPA - High Risk', 'NPA - Critical'].forEach(label => {
             const group = auditReportData.filter(r => r['Risk Label'] === label);
             const cnt = group.length;
+            if (cnt === 0 && label.startsWith('NPA')) return; // Hide empty NPA categories
             const os = group.reduce((s, r) => s + parseAmount(r['Net O/s']), 0);
             const pct = totalAccounts > 0 ? cnt / totalAccounts : 0;
             const avgScore = cnt > 0 ? Math.round(group.reduce((s, r) => s + (r['Risk Score'] || 0), 0) / cnt) : 0;
@@ -906,20 +928,19 @@ export const exportToExcel = async (processedData, targetFields, auditPeriod, np
         // ──────────────────────────────────────────────────────────
         // SECTION 4 — TOP HIGH-RISK ACCOUNTS
         // ──────────────────────────────────────────────────────────
-        sectionHeader(currentRow, 5, '  SECTION 4 — TOP HIGH-RISK ACCOUNTS (by Risk Score)', COLOR.INDIGO_700);
+        sectionHeader(currentRow, 5, '  SECTION 4 — TOP HIGH-RISK STANDARD ACCOUNTS', COLOR.INDIGO_700);
         currentRow++;
         tableHeaderRow(currentRow, ['A/c No. / Borrower Name', 'Net O/s (Rs.)', 'Risk Score', 'Risk Label', 'Audit Remark']);
         currentRow++;
 
         const topRiskAccounts = [...auditReportData]
+            .filter(row => !String(row['Asset Classification'] || '').toUpperCase().includes('NPA'))
             .sort((a, b) => (b['Risk Score'] || 0) - (a['Risk Score'] || 0))
             .slice(0, 15);
 
         topRiskAccounts.forEach(row => {
             const label = row['Risk Label'] || 'Low';
-            const { bg, fg } = riskColors[label] || { bg: COLOR.GRAY_50, fg: COLOR.DARK };
 
-            // Col 1: Acno + Borrower name
             const nameCell = summarySheet.getCell(currentRow, 1);
             const acNo = String(row['A/c No.'] || row['CIF'] || '');
             const borrower = String(row['Borrower Name'] || '');
@@ -927,29 +948,22 @@ export const exportToExcel = async (processedData, targetFields, auditPeriod, np
             nameCell.font = { size: 9 };
             nameCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
 
-            // Col 2: Net O/s
             const osCell = summarySheet.getCell(currentRow, 2);
             osCell.value = parseAmount(row['Net O/s']);
-            osCell.numFmt = '#,##0';
             osCell.alignment = { vertical: 'middle', horizontal: 'right' };
             osCell.font = { size: 9 };
 
-            // Col 3: Risk Score
             const scoreCell = summarySheet.getCell(currentRow, 3);
             scoreCell.value = row['Risk Score'] || 0;
             scoreCell.numFmt = '0';
-            scoreCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
-            scoreCell.font = { bold: true, size: 10, color: { argb: fg } };
+            scoreCell.font = { bold: true, size: 10, color: { argb: 'FF000000' } };
             scoreCell.alignment = { vertical: 'middle', horizontal: 'center' };
 
-            // Col 4: Risk Label
             const labelCell = summarySheet.getCell(currentRow, 4);
             labelCell.value = label;
-            labelCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
-            labelCell.font = { bold: true, color: { argb: fg }, size: 9 };
+            labelCell.font = { bold: true, color: { argb: 'FF000000' }, size: 9 };
             labelCell.alignment = { vertical: 'middle', horizontal: 'center' };
 
-            // Col 5: Audit Remark
             const remarkCell = summarySheet.getCell(currentRow, 5);
             remarkCell.value = row['Audit Remark'] || '';
             remarkCell.font = { italic: true, size: 9 };
@@ -964,7 +978,62 @@ export const exportToExcel = async (processedData, targetFields, auditPeriod, np
 
         if (topRiskAccounts.length === 0) {
             summarySheet.mergeCells(currentRow, 1, currentRow, 5);
-            summarySheet.getCell(currentRow, 1).value = 'No accounts to display.';
+            summarySheet.getCell(currentRow, 1).value = 'No standard accounts to display.';
+            currentRow++;
+        }
+
+        currentRow += 1;
+        sectionHeader(currentRow, 5, '  SECTION 5 — TOP CRITICAL NPA ACCOUNTS', COLOR.INDIGO_700);
+        currentRow++;
+        tableHeaderRow(currentRow, ['A/c No. / Borrower Name', 'Net O/s (Rs.)', 'Risk Score', 'Risk Label', 'Audit Remark']);
+        currentRow++;
+
+        const topNpaAccounts = [...auditReportData]
+            .filter(row => String(row['Asset Classification'] || '').toUpperCase().includes('NPA') && String(row['Risk Label'] || '').includes('NPA - Critical'))
+            .sort((a, b) => (b['Risk Score'] || 0) - (a['Risk Score'] || 0))
+            .slice(0, 15);
+
+        topNpaAccounts.forEach(row => {
+            const label = row['Risk Label'] || 'NPA - Critical';
+
+            const nameCell = summarySheet.getCell(currentRow, 1);
+            const acNo = String(row['A/c No.'] || row['CIF'] || '');
+            const borrower = String(row['Borrower Name'] || '');
+            nameCell.value = acNo ? `${acNo} — ${borrower}` : borrower;
+            nameCell.font = { size: 9 };
+            nameCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1, wrapText: true };
+
+            const osCell = summarySheet.getCell(currentRow, 2);
+            osCell.value = parseAmount(row['Net O/s']);
+            osCell.alignment = { vertical: 'middle', horizontal: 'right' };
+            osCell.font = { size: 9 };
+
+            const scoreCell = summarySheet.getCell(currentRow, 3);
+            scoreCell.value = row['Risk Score'] || 0;
+            scoreCell.numFmt = '0';
+            scoreCell.font = { bold: true, size: 10, color: { argb: 'FF000000' } };
+            scoreCell.alignment = { vertical: 'middle', horizontal: 'center' };
+
+            const labelCell = summarySheet.getCell(currentRow, 4);
+            labelCell.value = label;
+            labelCell.font = { bold: true, color: { argb: 'FF000000' }, size: 9 };
+            labelCell.alignment = { vertical: 'middle', horizontal: 'center' };
+
+            const remarkCell = summarySheet.getCell(currentRow, 5);
+            remarkCell.value = row['Audit Remark'] || '';
+            remarkCell.font = { italic: true, size: 9 };
+            remarkCell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
+
+            [nameCell, osCell, scoreCell, labelCell, remarkCell].forEach(c => {
+                c.border = { bottom: { style: 'hair', color: { argb: COLOR.GRAY_200 } } };
+            });
+            summarySheet.getRow(currentRow).height = 28;
+            currentRow++;
+        });
+
+        if (topNpaAccounts.length === 0) {
+            summarySheet.mergeCells(currentRow, 1, currentRow, 5);
+            summarySheet.getCell(currentRow, 1).value = 'No critical NPA accounts to display.';
             currentRow++;
         }
     }
@@ -1087,7 +1156,7 @@ export const exportToExcel = async (processedData, targetFields, auditPeriod, np
             });
         });
     }
-
+    const nonNpaTargetFields = baseAuditReportFields || targetFields;
     // --- Generate CC and TL Sheets ---
     // Check both Facility Code and Loan Type to catch all accounts regardless of mapping setup
     if (targetFields.includes('Facility Code') || targetFields.includes('Loan Type')) {
@@ -1133,7 +1202,7 @@ export const exportToExcel = async (processedData, targetFields, auditPeriod, np
         let ccFieldsToUse = [...nonNpaTargetFields];
 
         // Remove excluded fields from CC output
-        const ccExcludedFields = ['Credit Balance', 'A/c Open Date', 'PAN', 'Aadhar No.', 'PS Flag', 'NPA Date', 'NPA Provision'];
+        const ccExcludedFields = ['Credit Balance', 'A/c Open Date', 'PAN', 'Aadhar No.', 'PS Flag', 'NPA Date', 'NPA Provision', 'Outstanding EMIs', 'Theo EMI', 'Inst Due', 'Tenure'];
         ccExcludedFields.forEach(f => {
             const idx = ccFieldsToUse.indexOf(f);
             if (idx !== -1) ccFieldsToUse.splice(idx, 1);
@@ -1451,6 +1520,17 @@ export const exportToExcel = async (processedData, targetFields, auditPeriod, np
     stratificationSheet.getRow(1).height = 40;
 
     const addStratTable = (title, columns, data, formulaGenerator, startColIdx) => {
+
+        const isEmpty = !data || data.length === 0 || data.every(row => row.count === 0 && row.sum === 0);
+        if (isEmpty) {
+            stratificationSheet.getColumn(startColIdx).width = 2;
+            stratificationSheet.getColumn(startColIdx + 1).width = 2;
+            stratificationSheet.getColumn(startColIdx + 2).width = 2;
+            return;
+        }
+        stratificationSheet.getColumn(startColIdx).width = 25;
+        stratificationSheet.getColumn(startColIdx + 1).width = 15;
+        stratificationSheet.getColumn(startColIdx + 2).width = 25;
         const startColChar = getColumnLetter(startColIdx);
         const endColChar = getColumnLetter(startColIdx + 2);
 
@@ -1658,7 +1738,9 @@ export const exportToExcel = async (processedData, targetFields, auditPeriod, np
                         cellValue = cell.value.toLocaleString('en-IN', { maximumFractionDigits: 0 });
                     }
 
-                    if (cellValue.length > maxLength) {
+                    // Override if Advance Stratification set column to 2 manually
+                    if (column.width === 2) { maxLength = 0; }
+                    else if (cellValue.length > maxLength) {
                         maxLength = cellValue.length;
                     }
                 });
@@ -1889,6 +1971,11 @@ export const exportToExcel = async (processedData, targetFields, auditPeriod, np
         };
 
         styleSheet('NPA Accounts', npaData);
+            
+        let npaCriticalData = npaData.filter(row => String(row['Risk Label'] || '').includes('NPA - Critical'));
+        if (npaCriticalData.length > 0) {
+            styleSheet('Critical NPA Accounts', npaCriticalData);
+        }
     }
 
     // --- Generate Overdrawn Accounts (>110%) Sheet ---
@@ -3092,27 +3179,16 @@ export const exportToExcel = async (processedData, targetFields, auditPeriod, np
     // --- Generate Sheet Index in Parameters ---
     const indexParamSheet = workbook.getWorksheet('Parameters');
     if (indexParamSheet) {
-        // Find the next available row after the parameters list
-        let nextRow = indexParamSheet.rowCount + 3;
-
-        const indexHeaderCell = indexParamSheet.getCell(`A${nextRow}`);
-        indexHeaderCell.value = 'Index of Generated Sheets';
-        indexHeaderCell.font = { bold: true, size: 14, color: { argb: 'FF4C1D95' } };
-        indexHeaderCell.alignment = { vertical: 'middle', horizontal: 'left' };
-
-        nextRow++;
-
-        // Add a link for every sheet generated except Parameters
-        workbook.worksheets.forEach((sheet) => {
+        let nextRow = indexParamSheet.rowCount + 2;
+        workbook.worksheets.forEach(sheet => {
             if (sheet.name !== 'Parameters') {
                 const linkCell = indexParamSheet.getCell(`A${nextRow}`);
-                // ExcelJS hyperlink format
                 linkCell.value = {
                     text: `Go to ${sheet.name}`,
                     hyperlink: `#'${sheet.name}'!A1`
                 };
                 linkCell.font = {
-                    color: { argb: 'FF0000FF' }, // Blue link color
+                    color: { argb: 'FF0000FF' },
                     underline: true,
                     size: 11
                 };
@@ -3165,7 +3241,45 @@ export const exportToExcel = async (processedData, targetFields, auditPeriod, np
     });
 
     // Export buffer
-    const buffer = await workbook.xlsx.writeBuffer();
+    
+        // Apply Universal Formatting across all sheets
+        workbook.worksheets.forEach(ws => {
+            ws.columns.forEach((col, i) => {
+                const headerCell = ws.getCell(1, i + 1);
+                if (headerCell && (headerCell.value === 'A/c No.' || headerCell.value === 'CIF' || headerCell.value === 'PAN')) {
+                    col.eachCell({ includeEmpty: false }, cell => { if (cell.row > 1) cell.numFmt = '@'; }); // Force text format
+                }
+            });
+            
+            ws.eachRow(row => {
+                row.eachCell({ includeEmpty: true }, cell => {
+                    let cellVal = cell.value;
+                    let isCalc = false;
+                    if (cellVal && typeof cellVal === 'object' && cellVal.result !== undefined) {
+                        cellVal = cellVal.result; // Extract calculated result
+                        isCalc = true;
+                    }
+                    
+                    if (typeof cellVal === 'number' && !isNaN(cellVal)) {
+                        // Numeric types (either direct or calculated)
+                        if (!cell.numFmt || cell.numFmt === 'General' || String(cell.numFmt).includes('#,##0')) {
+                            // Ignore specific percentages if they exist
+                            if (!String(cell.numFmt).includes('%') && !String(cell.numFmt).includes('0%')) {
+                                cell.numFmt = '_(* #,##0_);_(* (#,##0);_(* "-"_);_(@_)';
+                            }
+                        }
+                    } else if (cellVal instanceof Date) {
+                        if (!cell.numFmt || cell.numFmt === 'General') {
+                            cell.numFmt = 'DD-MM-YY';
+                        }
+                    } else if (typeof cellVal === 'string' && cellVal.trim() !== '') {
+                        // Apply string safety on columns
+                    }
+                });
+            });
+        });
+
+        const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     // Include audit date in filename for easy identification
     const dateStr = auditToObj.toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\//g, '-');

@@ -234,7 +234,7 @@ function App() {
         setAppState('REPORT_MAPPING');
       } catch (e) {
         console.error(e);
-        showError('Failed to generate or export the report. Please check your data.');
+        showError('Export Error: ' + (e.stack || e.message || String(e)));
         setAppState('REPORT_MAPPING');
       }
     }, 100);
